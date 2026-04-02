@@ -648,20 +648,35 @@ async def get_ai_insights(symbol: str = DEFAULT_SYMBOL, limit: int = 20):
     return {"insights": await db.ai_insights.find({"symbol": symbol}, {"_id": 0}).sort("timestamp", -1).to_list(limit)}
 
 # LSTM
+lstm_training_status = {}
+
 @api_router.get("/lstm/status")
 async def get_lstm_status(symbol: str = DEFAULT_SYMBOL):
     lstm = get_lstm(symbol)
     s = get_bot_state(symbol)
-    return {"trained": lstm.trained, "prediction": s.get("last_lstm", {}), "symbol": symbol}
+    training = lstm_training_status.get(symbol, False)
+    return {"trained": lstm.trained, "training": training, "prediction": s.get("last_lstm", {}), "symbol": symbol}
+
+async def _train_lstm_bg(symbol):
+    lstm_training_status[symbol] = True
+    try:
+        lstm = get_lstm(symbol)
+        df = await asyncio.to_thread(fetch_ohlcv_sync, symbol, 500)
+        if df is not None:
+            await asyncio.to_thread(lstm.train, df)
+            logger.info(f"LSTM background training complete for {symbol}")
+    except Exception as e:
+        logger.error(f"LSTM bg train error: {e}")
+    finally:
+        lstm_training_status[symbol] = False
 
 @api_router.post("/lstm/train")
 async def train_lstm(symbol: str = DEFAULT_SYMBOL):
-    lstm = get_lstm(symbol)
-    df = await asyncio.to_thread(fetch_ohlcv_sync, symbol, 500)
-    if df is None:
-        return {"error": "Failed to fetch data"}
-    success = await asyncio.to_thread(lstm.train, df)
-    return {"status": "trained" if success else "failed", "symbol": symbol}
+    if lstm_training_status.get(symbol):
+        return {"status": "already_training", "symbol": symbol}
+    # Start training in background to avoid timeout
+    asyncio.create_task(_train_lstm_bg(symbol))
+    return {"status": "training_started", "symbol": symbol}
 
 @api_router.get("/lstm/predict")
 async def predict_lstm(symbol: str = DEFAULT_SYMBOL):

@@ -1,32 +1,37 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Brain } from "lucide-react";
 import { postApi, useApi } from "@/hooks/useApi";
 
-export default function LSTMPanel({ lstm: externalLstm, currentSignal, symbol }) {
-  const [training, setTraining] = useState(false);
+export default function LSTMPanel({ currentSignal, symbol }) {
   const [trainError, setTrainError] = useState(null);
+  const pollRef = useRef(null);
 
-  // Use own fetch for LSTM status so we can refetch after training
-  const { data: lstmData, refetch: refetchLstm } = useApi(`/lstm/status?symbol=${encodeURIComponent(symbol)}`, 10000);
+  // Poll LSTM status - faster when training
+  const { data: lstmData, refetch: refetchLstm } = useApi(`/lstm/status?symbol=${encodeURIComponent(symbol)}`, 3000);
 
-  const lstm = lstmData || externalLstm;
-  const trained = lstm?.trained || false;
-  const prediction = lstm?.prediction || currentSignal?.lstm || {};
+  const trained = lstmData?.trained || false;
+  const isTraining = lstmData?.training || false;
+  const prediction = lstmData?.prediction || currentSignal?.lstm || {};
+
+  // Stop polling fast once training completes
+  useEffect(() => {
+    if (isTraining) {
+      pollRef.current = setInterval(refetchLstm, 2000);
+      return () => clearInterval(pollRef.current);
+    }
+  }, [isTraining, refetchLstm]);
 
   const trainModel = async () => {
-    setTraining(true);
     setTrainError(null);
     try {
       const result = await postApi(`/lstm/train?symbol=${encodeURIComponent(symbol)}`);
-      if (result.status === "failed") {
-        setTrainError("Training failed - not enough data");
+      if (result.status === "already_training") {
+        return; // Already training
       }
-      // Refetch status to show updated model
-      await refetchLstm();
+      // Immediately refetch to show training state
+      setTimeout(refetchLstm, 500);
     } catch (e) {
-      setTrainError(e.message || "Training failed");
-    } finally {
-      setTraining(false);
+      setTrainError(e.message || "Failed to start training");
     }
   };
 
@@ -43,16 +48,16 @@ export default function LSTMPanel({ lstm: externalLstm, currentSignal, symbol })
         <h3 className="font-heading text-base font-bold uppercase tracking-widest flex items-center gap-2" style={{ color: '#a1a1aa' }}>
           <Brain size={16} /> LSTM MODEL
         </h3>
-        <button data-testid="train-lstm-button" onClick={trainModel} disabled={training} className="btn-terminal text-xs">
-          {training ? 'TRAINING...' : trained ? 'RETRAIN' : 'TRAIN'}
+        <button data-testid="train-lstm-button" onClick={trainModel} disabled={isTraining} className="btn-terminal text-xs">
+          {isTraining ? 'TRAINING...' : trained ? 'RETRAIN' : 'TRAIN'}
         </button>
       </div>
 
       {/* Status */}
       <div className="flex items-center gap-2 mb-4">
-        <div className="w-2 h-2" style={{ background: training ? '#FDE047' : trained ? '#00FF41' : '#FF003C', animation: training ? 'pulse-dot 1s ease-in-out infinite' : 'none' }} />
+        <div className="w-2 h-2" style={{ background: isTraining ? '#FDE047' : trained ? '#00FF41' : '#FF003C', animation: isTraining ? 'pulse-dot 1s ease-in-out infinite' : 'none' }} />
         <span className="text-xs font-mono uppercase tracking-widest" style={{ color: '#a1a1aa' }}>
-          {training ? 'TRAINING ON 500 CANDLES...' : trained ? 'MODEL READY' : 'NOT TRAINED'}
+          {isTraining ? 'TRAINING ON 500 CANDLES...' : trained ? 'MODEL READY' : 'NOT TRAINED'}
         </span>
       </div>
 
@@ -63,22 +68,16 @@ export default function LSTMPanel({ lstm: externalLstm, currentSignal, symbol })
         </div>
       )}
 
-      {trained && (
+      {trained && !isTraining && (
         <>
-          {/* Direction prediction */}
           <div className="text-center py-3 mb-3" style={{ background: '#000', border: '1px solid #27272a' }}>
             <div className="text-xs font-mono uppercase tracking-widest" style={{ color: '#52525b' }}>PREDICTED DIRECTION</div>
-            <div className="text-2xl font-heading font-black mt-1" style={{ color: dirColor }}>
-              {direction}
-            </div>
+            <div className="text-2xl font-heading font-black mt-1" style={{ color: dirColor }}>{direction}</div>
             {changePct !== 0 && (
-              <div className="text-sm font-mono mt-1" style={{ color: dirColor }}>
-                {changePct > 0 ? '+' : ''}{changePct.toFixed(4)}%
-              </div>
+              <div className="text-sm font-mono mt-1" style={{ color: dirColor }}>{changePct > 0 ? '+' : ''}{changePct.toFixed(4)}%</div>
             )}
           </div>
 
-          {/* Confidence bar */}
           <div className="mb-3">
             <div className="flex justify-between mb-1">
               <span className="text-xs font-mono uppercase tracking-widest" style={{ color: '#52525b' }}>CONFIDENCE</span>
@@ -89,7 +88,6 @@ export default function LSTMPanel({ lstm: externalLstm, currentSignal, symbol })
             </div>
           </div>
 
-          {/* Predicted price */}
           {predPrice && (
             <div className="flex justify-between py-2" style={{ borderTop: '1px solid #27272a' }}>
               <span className="text-xs font-mono uppercase tracking-widest" style={{ color: '#52525b' }}>PREDICTED PRICE</span>
@@ -97,7 +95,6 @@ export default function LSTMPanel({ lstm: externalLstm, currentSignal, symbol })
             </div>
           )}
 
-          {/* Signal */}
           <div className="flex justify-between py-2" style={{ borderTop: '1px solid #27272a' }}>
             <span className="text-xs font-mono uppercase tracking-widest" style={{ color: '#52525b' }}>LSTM SIGNAL</span>
             <span className="text-xs font-mono font-bold" style={{ color: dirColor }}>{prediction.signal || 'HOLD'}</span>
@@ -105,10 +102,9 @@ export default function LSTMPanel({ lstm: externalLstm, currentSignal, symbol })
         </>
       )}
 
-      {!trained && !training && (
+      {!trained && !isTraining && (
         <div className="text-xs font-mono py-4 text-center" style={{ color: '#52525b' }}>
           Click TRAIN to initialize the LSTM model with historical data.
-          The model learns from 500 candles of OHLCV data.
         </div>
       )}
     </div>
