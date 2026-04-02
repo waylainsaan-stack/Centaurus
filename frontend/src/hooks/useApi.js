@@ -8,28 +8,45 @@ export function useApi(endpoint, interval = null) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const endpointRef = useRef(endpoint);
 
-  const fetch = useCallback(async () => {
+  // Reset data immediately when endpoint changes
+  useEffect(() => {
+    if (endpointRef.current !== endpoint) {
+      endpointRef.current = endpoint;
+      setData(null);
+      setLoading(true);
+    }
+  }, [endpoint]);
+
+  const fetchData = useCallback(async () => {
     try {
       const res = await axios.get(`${API}${endpoint}`);
-      setData(res.data);
-      setError(null);
+      // Only set data if this is still the current endpoint
+      if (endpointRef.current === endpoint) {
+        setData(res.data);
+        setError(null);
+      }
     } catch (e) {
-      setError(e.message);
+      if (endpointRef.current === endpoint) {
+        setError(e.message);
+      }
     } finally {
-      setLoading(false);
+      if (endpointRef.current === endpoint) {
+        setLoading(false);
+      }
     }
   }, [endpoint]);
 
   useEffect(() => {
-    fetch();
+    fetchData();
     if (interval) {
-      const id = setInterval(fetch, interval);
+      const id = setInterval(fetchData, interval);
       return () => clearInterval(id);
     }
-  }, [fetch, interval]);
+  }, [fetchData, interval]);
 
-  return { data, loading, error, refetch: fetch };
+  return { data, loading, error, refetch: fetchData };
 }
 
 export async function postApi(endpoint, body = {}) {

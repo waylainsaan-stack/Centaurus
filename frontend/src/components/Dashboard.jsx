@@ -34,14 +34,19 @@ export default function Dashboard() {
   const { data: notifications, refetch: refetchNotifs } = useApi("/notifications?limit=20", 8000);
   const { data: unreadCount, refetch: refetchUnread } = useApi("/notifications/unread", 5000);
   const { data: allPrices } = useApi("/market/prices", 15000);
-  const { data: lstmData } = useApi(`/lstm/status?symbol=${sp}`, 10000);
   const { data: newsData } = useApi(`/news?symbol=${sp}`, 30000);
   const { data: newsSentiment } = useApi(`/news/sentiment?symbol=${sp}`, 15000);
   const { data: combinedSignal } = useApi(`/signal/combined?symbol=${sp}`, 5000);
 
-  // Use WebSocket data for real-time updates
+  // Clear WS state when pair changes
   const [wsPrice, setWsPrice] = useState(null);
   const [wsSignal, setWsSignal] = useState(null);
+  useEffect(() => {
+    setWsPrice(null);
+    setWsSignal(null);
+  }, [activeSymbol]);
+
+  // Use WebSocket data for real-time updates
   useEffect(() => {
     if (lastMessage?.type === 'update' && lastMessage?.symbol === activeSymbol) {
       if (lastMessage.price) setWsPrice(lastMessage.price);
@@ -81,7 +86,7 @@ export default function Dashboard() {
       {/* Row 2: LSTM + Indicators + Order Book */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">
         <div className="border-b border-r" style={{ borderColor: '#27272a' }}>
-          <LSTMPanel lstm={lstmData} currentSignal={currentSignal} symbol={activeSymbol} />
+          <LSTMPanel currentSignal={currentSignal} symbol={activeSymbol} />
         </div>
         <div className="border-b border-r" style={{ borderColor: '#27272a' }}>
           <IndicatorPanel indicators={indicatorData} currentSignal={currentSignal} />
