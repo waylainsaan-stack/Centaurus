@@ -1,0 +1,68 @@
+{
+  "summary": "Completed comprehensive testing of crypto AI trading bot with focus on NEW FEATURES: LSTM model training/prediction, news sentiment analysis, and combined signal weighting. All 38 backend APIs working (100%), frontend fully functional with real-time WebSocket updates.",
+  "backend_issues": {
+    "critical_bugs": [],
+    "flaky_endpoints": [],
+    "minor_issues": [
+      {
+        "endpoint": "/api/signal/combined",
+        "issue": "Returns empty object when bot is not running - requires bot to be started first",
+        "impact": "Combined signal data only available when bot loop is active",
+        "fix_priority": "LOW"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "GET /api/ returns API response",
+    "GET /api/pairs returns 8 supported pairs (BTC/USDT, ETH/USDT, SOL/USDT, XRP/USDT, DOGE/USDT, ADA/USDT, AVAX/USDT, DOT/USDT)",
+    "GET /api/market/price returns live BTC/USDT price ($66,345.76)",
+    "GET /api/market/price?symbol=ETH/USDT returns ETH price ($2,037.50)",
+    "GET /api/market/indicators returns RSI, EMA, MACD, Bollinger data with all technical indicators",
+    "GET /api/market/orderbook returns bids/asks with signal and volume pressure",
+    "GET /api/market/ohlcv returns OHLCV chart data (100 records)",
+    "GET /api/market/prices returns multi-pair prices for all 8 supported pairs",
+    "POST /api/lstm/train trains the LSTM model successfully (status: trained)",
+    "GET /api/lstm/predict returns prediction after training (SELL signal, 4.0% confidence, DOWN direction)",
+    "GET /api/lstm/status returns trained status (trained=true)",
+    "GET /api/news returns articles from CryptoPanic/CoinDesk/CoinTelegraph (10 articles)",
+    "POST /api/news/analyze triggers AI sentiment analysis of news (BEARISH sentiment, score: -72, signal: SELL)",
+    "GET /api/news/sentiment returns news sentiment data",
+    "GET /api/signal/combined returns weighted combined signal breakdown (TA 25%, OrderBook 15%, LSTM 20%, News 20%, AI 20%)",
+    "POST /api/bot/start starts bot loop successfully",
+    "GET /api/bot/status shows running=true after start",
+    "POST /api/bot/stop stops bot successfully",
+    "POST /api/trades/execute executes simulated trade (SIMULATED status)",
+    "POST /api/alerts/create creates alert successfully",
+    "GET /api/notifications returns notifications list",
+    "Frontend loads with Combined Signal panel showing weighted sources (TA, ORDER BOOK, LSTM PREDICTION, NEWS SENTIMENT, GPT-5.2 AI)",
+    "Frontend LSTM panel shows model status (MODEL READY) and TRAIN/RETRAIN button working",
+    "Frontend News Feed shows articles and ANALYZE SENTIMENT button working",
+    "Frontend WebSocket indicator shows WS badge in top bar",
+    "LSTM training functionality works (button shows TRAINING... during process)",
+    "News sentiment analysis functionality works (button shows ANALYZING... during process)",
+    "Real-time WebSocket updates working (signal changed from SELL to WAIT)",
+    "Combined signal weighting system working with all 5 components",
+    "All 31 previous backend endpoints still working",
+    "Live market data integration working for all 8 pairs",
+    "AI analysis with GPT-5.2 working",
+    "Risk management system functional",
+    "Alert system creates and manages alerts",
+    "Notification system working",
+    "Multi-pair dashboard updates correctly"
+  ],
+  "test_report_links": ["/app/backend_test.py"],
+  "success_percentage": {
+    "backend": "100% (38/38 endpoints working)",
+    "frontend": "100% (all panels and interactions working)",
+    "integration": "100% (all features integrated properly with real-time updates)"
+  },
+  "updated_files": ["/app/backend_test.py"],
+  "action_item_for_main_agent": "",
+  "should_call_test_agent_after_fix": "false",
+  "should_main_agent_test_itself": "true"
+}

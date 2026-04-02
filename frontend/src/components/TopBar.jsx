@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Activity, Power, PowerOff, Bell, TrendingUp } from "lucide-react";
 import { postApi } from "@/hooks/useApi";
 
-export default function TopBar({ botStatus, priceData, refetchStatus, activeSymbol, showAlerts, setShowAlerts, showTrade, setShowTrade, unreadCount }) {
+export default function TopBar({ botStatus, priceData, refetchStatus, activeSymbol, showAlerts, setShowAlerts, showTrade, setShowTrade, unreadCount, wsConnected }) {
   const [toggling, setToggling] = useState(false);
   const running = botStatus?.running;
   const symbolParam = encodeURIComponent(activeSymbol);
@@ -30,6 +30,7 @@ export default function TopBar({ botStatus, priceData, refetchStatus, activeSymb
         </div>
         <span className="font-heading text-lg font-black tracking-tighter uppercase" style={{ color: '#fafafa' }}>CRYPTO AI BOT</span>
         <span className="text-xs uppercase tracking-widest" style={{ color: '#52525b', fontFamily: 'JetBrains Mono, monospace' }}>{activeSymbol}</span>
+        {wsConnected && <span className="text-xs font-mono px-1" style={{ color: '#00FF41', background: 'rgba(0,255,65,0.1)' }}>WS</span>}
       </div>
 
       <div className="hidden md:flex items-center gap-6">

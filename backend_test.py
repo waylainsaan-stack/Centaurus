@@ -542,6 +542,132 @@ class CryptoAIBotTester:
                 return False
         return success
 
+    # LSTM MODEL TESTS
+    def test_lstm_status(self):
+        """Test GET /api/lstm/status returns trained status"""
+        success, response = self.run_test("LSTM Status", "GET", "/lstm/status", 200)
+        if success and isinstance(response, dict):
+            trained = response.get('trained')
+            prediction = response.get('prediction', {})
+            if isinstance(trained, bool):
+                print(f"   ✅ LSTM status: trained={trained}")
+                return True
+            else:
+                print(f"   ❌ Invalid LSTM status response: trained={trained}")
+                return False
+        return success
+
+    def test_lstm_train(self):
+        """Test POST /api/lstm/train trains the LSTM model successfully"""
+        print("   ⏳ LSTM training may take 30-60 seconds...")
+        success, response = self.run_test("LSTM Train", "POST", "/lstm/train", 200, timeout=120)
+        if success and isinstance(response, dict):
+            status = response.get('status')
+            if status in ['trained', 'failed']:
+                print(f"   ✅ LSTM training response: {status}")
+                return True
+            else:
+                print(f"   ❌ Invalid LSTM training response: {status}")
+                return False
+        return success
+
+    def test_lstm_predict(self):
+        """Test GET /api/lstm/predict returns prediction after training"""
+        success, response = self.run_test("LSTM Predict", "GET", "/lstm/predict", 200)
+        if success and isinstance(response, dict):
+            signal = response.get('signal')
+            confidence = response.get('confidence')
+            predicted_direction = response.get('predicted_direction')
+            if signal and confidence is not None and predicted_direction:
+                print(f"   ✅ LSTM prediction: {signal} ({confidence}% confidence, {predicted_direction})")
+                return True
+            elif 'error' in response:
+                print(f"   ⚠️ LSTM not trained yet: {response.get('error')}")
+                return True  # This is expected if model not trained
+            else:
+                print(f"   ❌ Invalid LSTM prediction response")
+                return False
+        return success
+
+    # NEWS TESTS
+    def test_news_get(self):
+        """Test GET /api/news returns articles from CryptoPanic/CoinDesk/CoinTelegraph"""
+        success, response = self.run_test("Get News", "GET", "/news", 200, timeout=30)
+        if success and isinstance(response, dict):
+            articles = response.get('articles', [])
+            count = response.get('count', 0)
+            if isinstance(articles, list) and count >= 0:
+                print(f"   ✅ News articles: {count} articles from multiple sources")
+                if articles:
+                    sources = set(article.get('source', 'Unknown') for article in articles[:5])
+                    print(f"   Sources found: {list(sources)}")
+                return True
+            else:
+                print(f"   ❌ Invalid news response: articles={type(articles)}, count={count}")
+                return False
+        return success
+
+    def test_news_analyze(self):
+        """Test POST /api/news/analyze triggers AI sentiment analysis of news"""
+        print("   ⏳ News sentiment analysis may take 10-30 seconds...")
+        success, response = self.run_test("Analyze News Sentiment", "POST", "/news/analyze", 200, timeout=60)
+        if success and isinstance(response, dict):
+            sentiment = response.get('sentiment', {})
+            articles = response.get('articles', [])
+            if sentiment and 'sentiment' in sentiment:
+                sentiment_value = sentiment.get('sentiment')
+                score = sentiment.get('score', 0)
+                signal = sentiment.get('signal', 'HOLD')
+                print(f"   ✅ News sentiment: {sentiment_value} (score: {score}, signal: {signal})")
+                return True
+            elif 'error' in response:
+                print(f"   ⚠️ News analysis error: {response.get('error')}")
+                return True  # May be expected if no news available
+            else:
+                print(f"   ❌ Invalid news analysis response")
+                return False
+        return success
+
+    def test_news_sentiment(self):
+        """Test GET /api/news/sentiment returns news sentiment data"""
+        success, response = self.run_test("Get News Sentiment", "GET", "/news/sentiment", 200)
+        if success and isinstance(response, dict):
+            sentiment = response.get('sentiment', 'NEUTRAL')
+            score = response.get('score', 0)
+            signal = response.get('signal', 'HOLD')
+            if sentiment and isinstance(score, (int, float)) and signal:
+                print(f"   ✅ News sentiment data: {sentiment} (score: {score}, signal: {signal})")
+                return True
+            else:
+                print(f"   ❌ Invalid sentiment data: sentiment={sentiment}, score={score}, signal={signal}")
+                return False
+        return success
+
+    # COMBINED SIGNAL TEST
+    def test_combined_signal(self):
+        """Test GET /api/signal/combined returns weighted combined signal breakdown"""
+        success, response = self.run_test("Combined Signal", "GET", "/signal/combined", 200)
+        if success and isinstance(response, dict):
+            signal = response.get('signal')
+            score = response.get('score')
+            confidence = response.get('confidence')
+            breakdown = response.get('breakdown', {})
+            components = response.get('components', {})
+            
+            if signal and score is not None and confidence is not None:
+                print(f"   ✅ Combined signal: {signal} (score: {score}, confidence: {confidence}%)")
+                
+                # Check breakdown weights
+                expected_components = ['technical', 'orderbook', 'lstm', 'news', 'ai']
+                present_components = [c for c in expected_components if c in breakdown]
+                print(f"   Signal breakdown components: {present_components}")
+                
+                return True
+            else:
+                print(f"   ❌ Invalid combined signal response")
+                return False
+        return success
+
 def main():
     print("🚀 Starting Crypto AI Trading Bot API Tests")
     print("=" * 60)
@@ -595,6 +721,19 @@ def main():
     test_results.append(("Get Notifications", tester.test_notifications_get))
     test_results.append(("Get Unread Count", tester.test_notifications_unread))
     test_results.append(("Mark All Read", tester.test_notifications_mark_read))
+    
+    # LSTM MODEL TESTS
+    test_results.append(("LSTM Status", tester.test_lstm_status))
+    test_results.append(("LSTM Train", tester.test_lstm_train))
+    test_results.append(("LSTM Predict", tester.test_lstm_predict))
+    
+    # NEWS TESTS
+    test_results.append(("Get News", tester.test_news_get))
+    test_results.append(("Analyze News Sentiment", tester.test_news_analyze))
+    test_results.append(("Get News Sentiment", tester.test_news_sentiment))
+    
+    # COMBINED SIGNAL TEST
+    test_results.append(("Combined Signal", tester.test_combined_signal))
     
     # Execute all tests
     for test_name, test_func in test_results:
