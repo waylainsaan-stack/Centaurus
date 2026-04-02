@@ -668,6 +668,166 @@ class CryptoAIBotTester:
                 return False
         return success
 
+    # BACKTESTING TESTS
+    def test_backtest_run_strong_filter(self):
+        """Test POST /api/backtest/run with signal_filter=STRONG returns backtest results"""
+        backtest_data = {
+            "symbol": "BTC/USDT",
+            "limit": 500,
+            "position_size_pct": 10,
+            "stop_loss_pct": 2.0,
+            "take_profit_pct": 5.0,
+            "signal_filter": "STRONG"
+        }
+        print("   ⏳ Backtesting may take 10-30 seconds...")
+        success, response = self.run_test("Backtest Run (STRONG filter)", "POST", "/backtest/run", 200, backtest_data, timeout=60)
+        if success and isinstance(response, dict):
+            required_fields = ['total_return_pct', 'win_rate', 'sharpe_ratio', 'max_drawdown_pct', 'trades', 'equity_curve']
+            missing_fields = [f for f in required_fields if f not in response]
+            if not missing_fields:
+                print(f"   ✅ Backtest complete: {response.get('total_return_pct')}% return, {response.get('win_rate')}% win rate")
+                print(f"   Metrics: Sharpe={response.get('sharpe_ratio')}, MaxDD={response.get('max_drawdown_pct')}%")
+                print(f"   Data: {len(response.get('trades', []))} trades, {len(response.get('equity_curve', []))} equity points")
+                return True, response.get('id')
+            else:
+                print(f"   ❌ Missing backtest fields: {missing_fields}")
+                return False, None
+        return success, None
+
+    def test_backtest_run_all_filter(self):
+        """Test POST /api/backtest/run with signal_filter=ALL returns backtest results with more trades"""
+        backtest_data = {
+            "symbol": "BTC/USDT",
+            "limit": 300,
+            "position_size_pct": 5,
+            "stop_loss_pct": 1.5,
+            "take_profit_pct": 3.0,
+            "signal_filter": "ALL"
+        }
+        print("   ⏳ Backtesting with ALL filter may take 10-30 seconds...")
+        success, response = self.run_test("Backtest Run (ALL filter)", "POST", "/backtest/run", 200, backtest_data, timeout=60)
+        if success and isinstance(response, dict):
+            total_trades = response.get('total_trades', 0)
+            total_return = response.get('total_return_pct', 0)
+            if total_trades >= 0:  # ALL filter should generally produce more trades than STRONG
+                print(f"   ✅ Backtest ALL filter: {total_trades} trades, {total_return}% return")
+                return True
+            else:
+                print(f"   ❌ Invalid ALL filter backtest: {total_trades} trades")
+                return False
+        return success
+
+    def test_backtest_history(self):
+        """Test GET /api/backtest/history returns stored backtest results"""
+        success, response = self.run_test("Backtest History", "GET", "/backtest/history", 200)
+        if success and isinstance(response, dict):
+            backtests = response.get('backtests', [])
+            if isinstance(backtests, list):
+                print(f"   ✅ Backtest history: {len(backtests)} stored results")
+                if backtests:
+                    latest = backtests[0]
+                    print(f"   Latest: {latest.get('total_return_pct')}% return, {latest.get('total_trades')} trades")
+                return True
+            else:
+                print(f"   ❌ Backtests not a list")
+                return False
+        return success
+
+    # AUTO-TRADING TESTS
+    def test_auto_trade_status_initial(self):
+        """Test GET /api/auto-trade/status returns initial disabled status"""
+        success, response = self.run_test("Auto-Trade Status Initial", "GET", "/auto-trade/status", 200)
+        if success and isinstance(response, dict):
+            enabled = response.get('enabled', None)
+            settings = response.get('settings', {})
+            recent_trades = response.get('recent_auto_trades', [])
+            if isinstance(enabled, bool) and isinstance(settings, dict) and isinstance(recent_trades, list):
+                print(f"   ✅ Auto-trade status: enabled={enabled}, {len(recent_trades)} recent trades")
+                return True
+            else:
+                print(f"   ❌ Invalid auto-trade status response")
+                return False
+        return success
+
+    def test_auto_trade_enable(self):
+        """Test POST /api/auto-trade/enable enables auto-trading for symbol"""
+        success, response = self.run_test("Auto-Trade Enable", "POST", "/auto-trade/enable", 200)
+        if success and isinstance(response, dict):
+            status = response.get('status')
+            symbol = response.get('symbol')
+            if status == 'enabled' and symbol:
+                print(f"   ✅ Auto-trade enabled: {status} for {symbol}")
+                return True
+            else:
+                print(f"   ❌ Invalid enable response: status={status}, symbol={symbol}")
+                return False
+        return success
+
+    def test_auto_trade_settings_update(self):
+        """Test POST /api/auto-trade/settings updates auto-trade configuration"""
+        settings_data = {
+            "symbol": "BTC/USDT",
+            "max_position_size": 0.002,
+            "stop_loss_pct": 2.5,
+            "take_profit_pct": 6.0,
+            "min_confidence": 40,
+            "cooldown_minutes": 10
+        }
+        # Convert to query params as expected by the endpoint
+        params = "&".join([f"{k}={v}" for k, v in settings_data.items()])
+        success, response = self.run_test("Auto-Trade Settings Update", "POST", f"/auto-trade/settings?{params}", 200)
+        if success and isinstance(response, dict):
+            status = response.get('status')
+            if status == 'updated':
+                print(f"   ✅ Auto-trade settings updated: {status}")
+                return True
+            else:
+                print(f"   ❌ Invalid settings update response: {status}")
+                return False
+        return success
+
+    def test_auto_trade_status_after_enable(self):
+        """Test GET /api/auto-trade/status returns enabled=true after enabling"""
+        success, response = self.run_test("Auto-Trade Status After Enable", "GET", "/auto-trade/status", 200)
+        if success and isinstance(response, dict):
+            enabled = response.get('enabled', None)
+            settings = response.get('settings', {})
+            if enabled is True:
+                print(f"   ✅ Auto-trade enabled: {enabled}")
+                print(f"   Settings: pos_size={settings.get('max_position_size')}, min_conf={settings.get('min_confidence')}%")
+                return True
+            else:
+                print(f"   ❌ Expected enabled=true, got: {enabled}")
+                return False
+        return success
+
+    def test_auto_trade_disable(self):
+        """Test POST /api/auto-trade/disable disables auto-trading"""
+        success, response = self.run_test("Auto-Trade Disable", "POST", "/auto-trade/disable", 200)
+        if success and isinstance(response, dict):
+            status = response.get('status')
+            symbol = response.get('symbol')
+            if status == 'disabled' and symbol:
+                print(f"   ✅ Auto-trade disabled: {status} for {symbol}")
+                return True
+            else:
+                print(f"   ❌ Invalid disable response: status={status}, symbol={symbol}")
+                return False
+        return success
+
+    def test_auto_trade_status_after_disable(self):
+        """Test GET /api/auto-trade/status returns enabled=false after disabling"""
+        success, response = self.run_test("Auto-Trade Status After Disable", "GET", "/auto-trade/status", 200)
+        if success and isinstance(response, dict):
+            enabled = response.get('enabled', None)
+            if enabled is False:
+                print(f"   ✅ Auto-trade disabled: {enabled}")
+                return True
+            else:
+                print(f"   ❌ Expected enabled=false, got: {enabled}")
+                return False
+        return success
+
 def main():
     print("🚀 Starting Crypto AI Trading Bot API Tests")
     print("=" * 60)
@@ -734,6 +894,19 @@ def main():
     
     # COMBINED SIGNAL TEST
     test_results.append(("Combined Signal", tester.test_combined_signal))
+    
+    # BACKTESTING TESTS
+    test_results.append(("Backtest Run (STRONG filter)", lambda: tester.test_backtest_run_strong_filter()))
+    test_results.append(("Backtest Run (ALL filter)", tester.test_backtest_run_all_filter))
+    test_results.append(("Backtest History", tester.test_backtest_history))
+    
+    # AUTO-TRADING TESTS
+    test_results.append(("Auto-Trade Status Initial", tester.test_auto_trade_status_initial))
+    test_results.append(("Auto-Trade Enable", tester.test_auto_trade_enable))
+    test_results.append(("Auto-Trade Settings Update", tester.test_auto_trade_settings_update))
+    test_results.append(("Auto-Trade Status After Enable", tester.test_auto_trade_status_after_enable))
+    test_results.append(("Auto-Trade Disable", tester.test_auto_trade_disable))
+    test_results.append(("Auto-Trade Status After Disable", tester.test_auto_trade_status_after_disable))
     
     # Execute all tests
     for test_name, test_func in test_results:

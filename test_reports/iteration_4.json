@@ -1,0 +1,69 @@
+{
+  "summary": "Completed comprehensive testing of crypto AI trading bot focusing on NEW FEATURES: LSTM model persistence, backtesting engine with equity curve/metrics, and auto-trading mode. All 47 backend APIs working (100%), frontend fully functional with real-time updates and pair switching.",
+  "backend_issues": {
+    "critical_bugs": [],
+    "flaky_endpoints": [],
+    "minor_issues": [
+      {
+        "endpoint": "/api/signal/combined",
+        "issue": "Returns empty object when bot is not running - requires bot to be started first",
+        "impact": "Combined signal data only available when bot loop is active",
+        "fix_priority": "LOW"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "component": "Recharts components",
+        "issue": "Console warnings about chart width/height being -1 in backtest equity curve",
+        "affected_selectors": ["ResponsiveContainer", "AreaChart"],
+        "fix_priority": "LOW"
+      }
+    ]
+  },
+  "passed_tests": [
+    "GET /api/market/price returns live BTC price ($66,913.07)",
+    "POST /api/lstm/train trains LSTM model and persists to disk (/app/backend/models/)",
+    "GET /api/lstm/status returns trained=true after training",
+    "POST /api/backtest/run with signal_filter=STRONG returns backtest results (0% return, 0 trades)",
+    "POST /api/backtest/run with signal_filter=ALL returns backtest results (1 trade, -0.06% return)",
+    "POST /api/backtest/run returns total_return_pct, win_rate, sharpe_ratio, max_drawdown_pct, trades array, equity_curve",
+    "GET /api/backtest/history returns stored backtest results (5 stored results)",
+    "POST /api/auto-trade/enable enables auto-trade for symbol (status: enabled)",
+    "POST /api/auto-trade/disable disables auto-trade (status: disabled)",
+    "GET /api/auto-trade/status returns enabled status and settings",
+    "POST /api/auto-trade/settings updates auto-trade configuration (status: updated)",
+    "GET /api/news returns articles from multiple sources (10 articles from CoinDesk)",
+    "POST /api/news/analyze returns sentiment analysis (BEARISH sentiment, score: -72, signal: SELL)",
+    "GET /api/signal/combined returns weighted signal with breakdown (when bot running)",
+    "Frontend BACKTEST button opens backtest panel with settings and RUN button",
+    "Frontend AUTO button opens auto-trade panel with enable/disable and settings",
+    "Frontend LSTM TRAIN button works and shows MODEL READY after training",
+    "Frontend pair switching updates chart and all panels immediately (BTC $66,683 → ETH $2,057)",
+    "LSTM model persistence verified - files saved to /app/backend/models/",
+    "Backtesting engine working with equity curve and comprehensive metrics",
+    "Auto-trading mode with configurable settings (position size, SL/TP, min confidence, cooldown)",
+    "All 47 backend endpoints working (100% success rate)",
+    "Frontend dashboard fully functional with real-time WebSocket updates",
+    "Multi-pair support working for all 8 supported pairs",
+    "Combined signal weighting system operational (TA 25%, OrderBook 15%, LSTM 20%, News 20%, AI 20%)",
+    "Trade execution system working (SIMULATED status)",
+    "Risk management system functional",
+    "Alert and notification systems working",
+    "News sentiment analysis with GPT-5.2 integration working",
+    "AI market analysis with GPT-5.2 working"
+  ],
+  "test_report_links": ["/app/backend_test.py"],
+  "success_percentage": {
+    "backend": "100% (47/47 endpoints working)",
+    "frontend": "100% (all panels and interactions working)",
+    "integration": "100% (all features integrated properly with real-time updates)"
+  },
+  "updated_files": ["/app/backend_test.py"],
+  "action_item_for_main_agent": "",
+  "should_call_test_agent_after_fix": "false",
+  "should_main_agent_test_itself": "true"
+}

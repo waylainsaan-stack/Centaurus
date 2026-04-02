@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { Activity, Power, PowerOff, Bell, TrendingUp } from "lucide-react";
+import { Activity, Power, PowerOff, Bell, TrendingUp, BarChart3, Bot } from "lucide-react";
 import { postApi } from "@/hooks/useApi";
 
-export default function TopBar({ botStatus, priceData, refetchStatus, activeSymbol, showAlerts, setShowAlerts, showTrade, setShowTrade, unreadCount, wsConnected }) {
+export default function TopBar({ botStatus, priceData, refetchStatus, activeSymbol, showAlerts, setShowAlerts, showTrade, setShowTrade, unreadCount, wsConnected, setShowBacktest, setShowAutoTrade }) {
   const [toggling, setToggling] = useState(false);
   const running = botStatus?.running;
   const symbolParam = encodeURIComponent(activeSymbol);
@@ -60,6 +60,14 @@ export default function TopBar({ botStatus, priceData, refetchStatus, activeSymb
           {unreadCount > 0 && (
             <span className="absolute -top-1 -right-1 w-4 h-4 text-[10px] flex items-center justify-center font-bold" style={{ background: '#FF003C', color: '#fff' }}>{unreadCount}</span>
           )}
+        </button>
+        <button data-testid="backtest-button" onClick={() => setShowBacktest(true)} className="btn-terminal flex items-center gap-2">
+          <BarChart3 size={14} />
+          BACKTEST
+        </button>
+        <button data-testid="auto-trade-button" onClick={() => setShowAutoTrade(true)} className="btn-terminal flex items-center gap-2" style={{ borderColor: '#FDE047', color: '#FDE047' }}>
+          <Bot size={14} />
+          AUTO
         </button>
         <button data-testid="trade-button" onClick={() => setShowTrade(!showTrade)} className="btn-terminal flex items-center gap-2" style={{ borderColor: '#00FF41', color: '#00FF41' }}>
           <TrendingUp size={14} />

@@ -12,12 +12,16 @@ import NotificationBar from "./NotificationBar";
 import MultiPairTicker from "./MultiPairTicker";
 import NewsFeed from "./NewsFeed";
 import LSTMPanel from "./LSTMPanel";
+import BacktestPanel from "./BacktestPanel";
+import AutoTradePanel from "./AutoTradePanel";
 import { useApi, useWebSocket } from "@/hooks/useApi";
 
 export default function Dashboard() {
   const [activeSymbol, setActiveSymbol] = useState("BTC/USDT");
   const [showAlerts, setShowAlerts] = useState(false);
   const [showTrade, setShowTrade] = useState(false);
+  const [showBacktest, setShowBacktest] = useState(false);
+  const [showAutoTrade, setShowAutoTrade] = useState(false);
 
   const sp = encodeURIComponent(activeSymbol);
   const { lastMessage, connected } = useWebSocket();
@@ -65,13 +69,15 @@ export default function Dashboard() {
         botStatus={botStatus} priceData={livePriceData} refetchStatus={refetchStatus}
         activeSymbol={activeSymbol} showAlerts={showAlerts} setShowAlerts={setShowAlerts}
         showTrade={showTrade} setShowTrade={setShowTrade} unreadCount={unreadCount?.unread || 0}
-        wsConnected={connected}
+        wsConnected={connected} setShowBacktest={setShowBacktest} setShowAutoTrade={setShowAutoTrade}
       />
 
       <MultiPairTicker prices={allPrices?.prices} activeSymbol={activeSymbol} onSelect={setActiveSymbol} />
 
       {showAlerts && <AlertPanel symbol={activeSymbol} onClose={() => setShowAlerts(false)} />}
       {showTrade && <TradePanel symbol={activeSymbol} priceData={livePriceData} onClose={() => setShowTrade(false)} refetchTrades={refetchTrades} />}
+      {showBacktest && <BacktestPanel symbol={activeSymbol} onClose={() => setShowBacktest(false)} />}
+      {showAutoTrade && <AutoTradePanel symbol={activeSymbol} onClose={() => setShowAutoTrade(false)} />}
 
       {/* Row 1: Chart + Combined Signal */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">

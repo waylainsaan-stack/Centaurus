@@ -31,6 +31,7 @@ TIMEFRAME = os.environ.get('TRADING_TIMEFRAME', '1m')
 
 from lstm_model import get_lstm
 from news_fetcher import fetch_all_news, analyze_news_sentiment
+from backtester import run_backtest
 
 def create_exchange():
     config = {'enableRateLimit': True, 'options': {'defaultType': 'spot'}}
@@ -445,7 +446,10 @@ async def bot_loop(symbol):
             # 9. Alerts
             await check_alerts(symbol, price, combined["signal"])
 
-            # 10. Broadcast via WebSocket
+            # 10. Auto-trade
+            await check_auto_trade(symbol, price, combined, indicators)
+
+            # 11. Broadcast via WebSocket
             await ws_manager.broadcast({
                 "type": "update", "symbol": symbol,
                 "price": price_data, "signal": combined,
@@ -497,6 +501,50 @@ async def execute_trade(symbol, side, order_type, amount, price, stop_loss=None,
         "price": price, "signal": side, "read": False,
     })
     return trade_doc
+
+# ---- AUTO-TRADE ENGINE ----
+async def check_auto_trade(symbol, price, combined, indicators):
+    """Execute trades automatically based on combined signal and risk settings."""
+    settings = await db.risk_settings.find_one({"symbol": symbol}, {"_id": 0})
+    if not settings or not settings.get("auto_trade"):
+        return
+
+    signal = combined.get("signal", "WAIT")
+    confidence = combined.get("confidence", 0)
+    min_confidence = settings.get("min_confidence", 30)
+
+    # Only trade on strong signals with sufficient confidence
+    if signal not in ["STRONG BUY", "STRONG SELL"] or confidence < min_confidence:
+        return
+
+    # Check cooldown - don't trade more than once per 5 minutes
+    last_trade = await db.trades.find_one({"symbol": symbol, "auto": True}, sort=[("timestamp", -1)])
+    if last_trade:
+        last_time = datetime.fromisoformat(last_trade["timestamp"])
+        cooldown = settings.get("cooldown_minutes", 5)
+        if (datetime.now(timezone.utc) - last_time).total_seconds() < cooldown * 60:
+            return
+
+    side = "BUY" if "BUY" in signal else "SELL"
+    amount = settings.get("max_position_size", 0.001)
+    sl_pct = settings.get("stop_loss_pct", 2.0)
+    tp_pct = settings.get("take_profit_pct", 5.0)
+    stop_loss = price * (1 - sl_pct / 100) if side == "BUY" else price * (1 + sl_pct / 100)
+    take_profit = price * (1 + tp_pct / 100) if side == "BUY" else price * (1 - tp_pct / 100)
+
+    trade = await execute_trade(symbol, side, "MARKET", amount, price, stop_loss, take_profit)
+
+    # Mark as auto-trade
+    await db.trades.update_one({"id": trade["id"]}, {"$set": {"auto": True, "combined_score": combined.get("score"), "combined_confidence": confidence}})
+
+    # Notify
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()), "timestamp": datetime.now(timezone.utc).isoformat(),
+        "symbol": symbol, "type": "auto_trade",
+        "message": f"AUTO {side} {amount} {symbol.split('/')[0]} @ ${price:,.2f} | Confidence: {confidence}% | Score: {combined.get('score')}",
+        "price": price, "signal": signal, "read": False,
+    })
+    logger.info(f"[AUTO-TRADE] {side} {amount} {symbol} @ ${price:,.2f} (conf: {confidence}%)")
 
 # ---- API ROUTES ----
 
@@ -731,6 +779,66 @@ async def mark_all_read():
 @api_router.get("/bot/errors")
 async def get_bot_errors(symbol: str = DEFAULT_SYMBOL):
     return {"errors": get_bot_state(symbol)["errors"][-20:]}
+
+# ---- BACKTEST ----
+class BacktestRequest(BaseModel):
+    symbol: str = DEFAULT_SYMBOL
+    limit: int = 500
+    position_size_pct: float = 10
+    stop_loss_pct: float = 2.0
+    take_profit_pct: float = 5.0
+    signal_filter: str = "STRONG"
+
+@api_router.post("/backtest/run")
+async def run_backtest_endpoint(req: BacktestRequest):
+    df = await asyncio.to_thread(fetch_ohlcv_sync, req.symbol, min(req.limit, 1000))
+    if df is None:
+        return {"error": "Failed to fetch data"}
+    result = run_backtest(df, position_size_pct=req.position_size_pct, stop_loss_pct=req.stop_loss_pct, take_profit_pct=req.take_profit_pct, signal_filter=req.signal_filter)
+    # Store result
+    result["symbol"] = req.symbol
+    result["timestamp"] = datetime.now(timezone.utc).isoformat()
+    result["id"] = str(uuid.uuid4())
+    store_doc = {k: v for k, v in result.items() if k != "equity_curve"}
+    await db.backtests.insert_one(store_doc)
+    store_doc.pop("_id", None)
+    return result
+
+@api_router.get("/backtest/history")
+async def get_backtest_history(symbol: str = DEFAULT_SYMBOL, limit: int = 10):
+    results = await db.backtests.find({"symbol": symbol}, {"_id": 0}).sort("timestamp", -1).to_list(limit)
+    return {"backtests": results}
+
+# ---- AUTO-TRADE SETTINGS ----
+@api_router.post("/auto-trade/enable")
+async def enable_auto_trade(symbol: str = DEFAULT_SYMBOL):
+    await db.risk_settings.update_one({"symbol": symbol}, {"$set": {"auto_trade": True}}, upsert=True)
+    return {"status": "enabled", "symbol": symbol}
+
+@api_router.post("/auto-trade/disable")
+async def disable_auto_trade(symbol: str = DEFAULT_SYMBOL):
+    await db.risk_settings.update_one({"symbol": symbol}, {"$set": {"auto_trade": False}}, upsert=True)
+    return {"status": "disabled", "symbol": symbol}
+
+@api_router.get("/auto-trade/status")
+async def get_auto_trade_status(symbol: str = DEFAULT_SYMBOL):
+    settings = await db.risk_settings.find_one({"symbol": symbol}, {"_id": 0})
+    auto_trades = await db.trades.find({"symbol": symbol, "auto": True}, {"_id": 0}).sort("timestamp", -1).to_list(10)
+    return {
+        "enabled": settings.get("auto_trade", False) if settings else False,
+        "settings": settings or {},
+        "recent_auto_trades": auto_trades,
+        "symbol": symbol,
+    }
+
+@api_router.post("/auto-trade/settings")
+async def update_auto_trade_settings(symbol: str = DEFAULT_SYMBOL, max_position_size: float = 0.001, stop_loss_pct: float = 2.0, take_profit_pct: float = 5.0, min_confidence: float = 30, cooldown_minutes: int = 5):
+    await db.risk_settings.update_one({"symbol": symbol}, {"$set": {
+        "max_position_size": max_position_size, "stop_loss_pct": stop_loss_pct,
+        "take_profit_pct": take_profit_pct, "min_confidence": min_confidence,
+        "cooldown_minutes": cooldown_minutes,
+    }}, upsert=True)
+    return {"status": "updated"}
 
 # ---- WEBSOCKET ----
 @app.websocket("/ws")
