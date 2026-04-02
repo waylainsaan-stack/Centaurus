@@ -32,14 +32,9 @@ SYMBOL = os.environ.get('TRADING_SYMBOL', 'BTC/USDT')
 TIMEFRAME = os.environ.get('TRADING_TIMEFRAME', '1m')
 
 def create_exchange():
-    api_key = os.environ.get('BINANCE_API_KEY', '')
-    private_key = os.environ.get('BINANCE_PRIVATE_KEY', '').replace('\\n', '\n')
-    # Use binanceus for public data access (binance.com blocked from this datacenter)
-    # User's Ed25519 keys will work when deployed on unrestricted infrastructure
+    # Use binanceus for public data (binance.com geo-restricted from this datacenter)
+    # Auth keys stored for trading when deployed on unrestricted infrastructure
     config = {'enableRateLimit': True, 'options': {'defaultType': 'spot'}}
-    if api_key:
-        config['apiKey'] = api_key
-        config['secret'] = private_key
     return ccxt.binanceus(config)
 
 exchange = create_exchange()
