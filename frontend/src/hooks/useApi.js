@@ -7,12 +7,10 @@ export function useApi(endpoint, interval = null) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const prevDataRef = useRef(null);
 
   const fetch = useCallback(async () => {
     try {
       const res = await axios.get(`${API}${endpoint}`);
-      prevDataRef.current = data;
       setData(res.data);
       setError(null);
     } catch (e) {
@@ -30,10 +28,15 @@ export function useApi(endpoint, interval = null) {
     }
   }, [fetch, interval]);
 
-  return { data, loading, error, refetch: fetch, prevData: prevDataRef.current };
+  return { data, loading, error, refetch: fetch };
 }
 
 export async function postApi(endpoint, body = {}) {
   const res = await axios.post(`${API}${endpoint}`, body);
+  return res.data;
+}
+
+export async function deleteApi(endpoint) {
+  const res = await axios.delete(`${API}${endpoint}`);
   return res.data;
 }

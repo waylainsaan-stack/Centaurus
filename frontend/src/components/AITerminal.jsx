@@ -2,14 +2,14 @@ import React, { useState } from "react";
 import { Zap } from "lucide-react";
 import { postApi } from "@/hooks/useApi";
 
-export default function AITerminal({ insights, currentSignal }) {
+export default function AITerminal({ insights, currentSignal, symbol = "BTC/USDT" }) {
   const [analyzing, setAnalyzing] = useState(false);
   const [latestResult, setLatestResult] = useState(null);
 
   const triggerAnalysis = async () => {
     setAnalyzing(true);
     try {
-      const result = await postApi("/ai/analyze");
+      const result = await postApi(`/ai/analyze?symbol=${encodeURIComponent(symbol)}`);
       setLatestResult(result);
     } catch (e) {
       setLatestResult({ error: e.message });

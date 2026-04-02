@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, BackgroundTasks
+from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -18,83 +18,89 @@ import json
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Binance setup
-SYMBOL = os.environ.get('TRADING_SYMBOL', 'BTC/USDT')
+# Supported trading pairs
+SUPPORTED_PAIRS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'DOGE/USDT', 'ADA/USDT', 'AVAX/USDT', 'DOT/USDT']
+DEFAULT_SYMBOL = os.environ.get('TRADING_SYMBOL', 'BTC/USDT')
 TIMEFRAME = os.environ.get('TRADING_TIMEFRAME', '1m')
 
 def create_exchange():
-    # Use binanceus for public data (binance.com geo-restricted from this datacenter)
-    # Auth keys stored for trading when deployed on unrestricted infrastructure
     config = {'enableRateLimit': True, 'options': {'defaultType': 'spot'}}
     return ccxt.binanceus(config)
 
+def create_auth_exchange():
+    api_key = os.environ.get('BINANCE_API_KEY', '')
+    private_key = os.environ.get('BINANCE_PRIVATE_KEY', '').replace('\\n', '\n')
+    config = {'enableRateLimit': True, 'options': {'defaultType': 'spot'}}
+    if api_key and private_key:
+        config['apiKey'] = api_key
+        config['secret'] = private_key
+        return ccxt.binance(config)
+    return None
+
 exchange = create_exchange()
 
-# Bot state
-bot_state = {
-    "running": False,
-    "task": None,
-    "last_price": None,
-    "last_signal": "WAIT",
-    "last_indicators": {},
-    "last_orderbook": {},
-    "last_ai_insight": "",
-    "started_at": None,
-    "iterations": 0,
-    "errors": [],
-}
+# Bot state per symbol
+bot_states = {}
 
-# App setup
+def get_bot_state(symbol):
+    if symbol not in bot_states:
+        bot_states[symbol] = {
+            "running": False,
+            "task": None,
+            "last_price": None,
+            "last_signal": "WAIT",
+            "last_indicators": {},
+            "last_orderbook": {},
+            "last_ai_insight": "",
+            "started_at": None,
+            "iterations": 0,
+            "errors": [],
+            "symbol": symbol,
+        }
+    return bot_states[symbol]
+
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
-# Models
-class BotStatus(BaseModel):
-    running: bool
-    last_price: Optional[float] = None
-    last_signal: str = "WAIT"
-    started_at: Optional[str] = None
-    iterations: int = 0
-    symbol: str = SYMBOL
-    timeframe: str = TIMEFRAME
+# ---- MODELS ----
 
-class SignalRecord(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: str
-    price: float
-    signal: str
-    rsi: Optional[float] = None
-    ema50: Optional[float] = None
-    ema200: Optional[float] = None
-    ob_signal: str = ""
-    ai_signal: str = ""
-    rsi_signal: str = ""
-    ai_insight: str = ""
+class TradeRequest(BaseModel):
+    symbol: str = DEFAULT_SYMBOL
+    side: str  # BUY or SELL
+    type: str = "MARKET"  # MARKET or LIMIT
+    amount: float
+    price: Optional[float] = None
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
 
-class AIInsight(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: str
-    insight: str
-    signal: str
-    price: float
+class AlertRule(BaseModel):
+    symbol: str = DEFAULT_SYMBOL
+    type: str  # price_above, price_below, signal_strong_buy, signal_strong_sell
+    value: Optional[float] = None
+    enabled: bool = True
 
-# ---- MARKET DATA ----
+class RiskSettings(BaseModel):
+    symbol: str = DEFAULT_SYMBOL
+    stop_loss_pct: float = 2.0
+    take_profit_pct: float = 5.0
+    max_position_size: float = 0.1
+    trailing_stop: bool = False
+    trailing_stop_pct: float = 1.0
 
-def fetch_price_sync():
+# ---- MARKET DATA (multi-pair) ----
+
+def fetch_price_sync(symbol=DEFAULT_SYMBOL):
     try:
-        ticker = exchange.fetch_ticker(SYMBOL)
+        ticker = exchange.fetch_ticker(symbol)
         return {
+            "symbol": symbol,
             "price": ticker['last'],
             "high": ticker.get('high'),
             "low": ticker.get('low'),
@@ -105,18 +111,19 @@ def fetch_price_sync():
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:
-        logger.error(f"Error fetching price: {e}")
+        logger.error(f"Error fetching price for {symbol}: {e}")
         return None
 
-def fetch_orderbook_sync():
+def fetch_orderbook_sync(symbol=DEFAULT_SYMBOL):
     try:
-        ob = exchange.fetch_order_book(SYMBOL, limit=10)
+        ob = exchange.fetch_order_book(symbol, limit=10)
         bids = ob['bids'][:10]
         asks = ob['asks'][:10]
         bid_vol = sum([b[1] for b in bids])
         ask_vol = sum([a[1] for a in asks])
         signal = 'BUY' if bid_vol > ask_vol else 'SELL'
         return {
+            "symbol": symbol,
             "bids": [{"price": b[0], "amount": b[1]} for b in bids],
             "asks": [{"price": a[0], "amount": a[1]} for a in asks],
             "bid_volume": round(bid_vol, 4),
@@ -126,17 +133,17 @@ def fetch_orderbook_sync():
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:
-        logger.error(f"Error fetching orderbook: {e}")
+        logger.error(f"Error fetching orderbook for {symbol}: {e}")
         return None
 
-def fetch_ohlcv_sync(limit=200):
+def fetch_ohlcv_sync(symbol=DEFAULT_SYMBOL, limit=200):
     try:
-        bars = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=limit)
+        bars = exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=limit)
         df = pd.DataFrame(bars, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
         df['time'] = pd.to_datetime(df['time'], unit='ms')
         return df
     except Exception as e:
-        logger.error(f"Error fetching OHLCV: {e}")
+        logger.error(f"Error fetching OHLCV for {symbol}: {e}")
         return None
 
 def compute_indicators(df):
@@ -162,14 +169,32 @@ def compute_indicators(df):
             indicators['rsi_zone'] = 'NEUTRAL'
     return df, indicators
 
+def fetch_multi_prices_sync():
+    results = []
+    for sym in SUPPORTED_PAIRS:
+        try:
+            ticker = exchange.fetch_ticker(sym)
+            results.append({
+                "symbol": sym,
+                "price": ticker['last'],
+                "change": ticker.get('percentage'),
+                "volume": ticker.get('baseVolume'),
+                "high": ticker.get('high'),
+                "low": ticker.get('low'),
+            })
+        except Exception as e:
+            logger.error(f"Error fetching {sym}: {e}")
+            results.append({"symbol": sym, "price": None, "change": None, "volume": None, "high": None, "low": None})
+    return results
+
 # ---- AI ANALYSIS ----
 
-async def ai_analyze(price, indicators, ob_data):
+async def ai_analyze(price, indicators, ob_data, symbol=DEFAULT_SYMBOL):
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         api_key = os.environ.get('EMERGENT_LLM_KEY', '')
         if not api_key:
-            return {"signal": "HOLD", "insight": "No API key configured for AI analysis."}
+            return {"signal": "HOLD", "insight": "No API key configured."}
 
         chat = LlmChat(
             api_key=api_key,
@@ -177,7 +202,7 @@ async def ai_analyze(price, indicators, ob_data):
             system_message="You are an expert cryptocurrency market analyst. Analyze the given market data and provide a concise trading signal (BUY, SELL, or HOLD) with a brief 2-3 sentence explanation. Be direct and data-driven."
         ).with_model("openai", "gpt-5.2")
 
-        prompt = f"""Analyze BTC/USDT market data:
+        prompt = f"""Analyze {symbol} market data:
 - Current Price: ${price:,.2f}
 - RSI(14): {indicators.get('rsi', 'N/A')} ({indicators.get('rsi_zone', 'N/A')})
 - EMA50: ${indicators.get('ema50', 'N/A')}
@@ -190,13 +215,11 @@ Respond in this exact JSON format:
 
         msg = UserMessage(text=prompt)
         response = await chat.send_message(msg)
-        
         try:
             cleaned = response.strip()
             if cleaned.startswith("```"):
                 cleaned = cleaned.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-            result = json.loads(cleaned)
-            return result
+            return json.loads(cleaned)
         except json.JSONDecodeError:
             signal = "HOLD"
             if "BUY" in response.upper():
@@ -206,7 +229,7 @@ Respond in this exact JSON format:
             return {"signal": signal, "insight": response[:300]}
     except Exception as e:
         logger.error(f"AI analysis error: {e}")
-        return {"signal": "HOLD", "insight": f"AI analysis unavailable: {str(e)[:100]}"}
+        return {"signal": "HOLD", "insight": f"AI unavailable: {str(e)[:100]}"}
 
 # ---- SIGNAL DECISION ----
 
@@ -218,11 +241,9 @@ def decide_signal(ai_signal, ob_signal, indicators):
             rsi_signal = 'BUY'
         elif rsi > 70:
             rsi_signal = 'SELL'
-
     signals = [ai_signal, ob_signal, rsi_signal]
     buy_count = signals.count('BUY')
     sell_count = signals.count('SELL')
-
     if buy_count >= 2:
         return 'STRONG BUY', rsi_signal
     elif sell_count >= 2:
@@ -231,63 +252,89 @@ def decide_signal(ai_signal, ob_signal, indicators):
         return 'BUY', rsi_signal
     elif sell_count == 1 and buy_count == 0:
         return 'SELL', rsi_signal
-    else:
-        return 'WAIT', rsi_signal
+    return 'WAIT', rsi_signal
 
-# ---- BOT LOOP ----
+# ---- ALERT ENGINE ----
 
-async def bot_loop():
-    global bot_state
-    logger.info("Bot loop started")
-    while bot_state["running"]:
+async def check_alerts(symbol, price, signal):
+    alerts = await db.alerts.find({"symbol": symbol, "enabled": True}, {"_id": 0}).to_list(100)
+    triggered = []
+    for alert in alerts:
+        fire = False
+        if alert["type"] == "price_above" and price >= alert.get("value", 0):
+            fire = True
+        elif alert["type"] == "price_below" and price <= alert.get("value", 0):
+            fire = True
+        elif alert["type"] == "signal_strong_buy" and "STRONG BUY" in signal:
+            fire = True
+        elif alert["type"] == "signal_strong_sell" and "STRONG SELL" in signal:
+            fire = True
+
+        if fire:
+            notif = {
+                "id": str(uuid.uuid4()),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "symbol": symbol,
+                "type": alert["type"],
+                "message": f"Alert triggered: {alert['type']} for {symbol} @ ${price:,.2f} | Signal: {signal}",
+                "price": price,
+                "signal": signal,
+                "read": False,
+            }
+            await db.notifications.insert_one(notif)
+            triggered.append(notif)
+            # Disable one-shot price alerts after triggering
+            if alert["type"] in ["price_above", "price_below"]:
+                await db.alerts.update_one({"id": alert["id"]}, {"$set": {"enabled": False}})
+    return triggered
+
+# ---- BOT LOOP (per symbol) ----
+
+async def bot_loop(symbol):
+    state = get_bot_state(symbol)
+    logger.info(f"Bot loop started for {symbol}")
+    while state["running"]:
         try:
-            # 1. Fetch price
-            price_data = await asyncio.to_thread(fetch_price_sync)
+            price_data = await asyncio.to_thread(fetch_price_sync, symbol)
             if price_data is None:
-                bot_state["errors"].append({"time": datetime.now(timezone.utc).isoformat(), "error": "Failed to fetch price"})
+                state["errors"].append({"time": datetime.now(timezone.utc).isoformat(), "error": "Failed to fetch price"})
                 await asyncio.sleep(30)
                 continue
-            
             price = price_data["price"]
-            bot_state["last_price"] = price
+            state["last_price"] = price
 
-            # 2. Fetch order book
-            ob_data = await asyncio.to_thread(fetch_orderbook_sync)
+            ob_data = await asyncio.to_thread(fetch_orderbook_sync, symbol)
             if ob_data:
-                bot_state["last_orderbook"] = ob_data
+                state["last_orderbook"] = ob_data
 
-            # 3. Fetch OHLCV & compute indicators
-            df = await asyncio.to_thread(fetch_ohlcv_sync, 200)
+            df = await asyncio.to_thread(fetch_ohlcv_sync, symbol, 200)
             df, indicators = compute_indicators(df)
             if indicators:
-                bot_state["last_indicators"] = indicators
+                state["last_indicators"] = indicators
 
-            # 4. AI analysis (every 5 iterations to save credits)
             ai_result = {"signal": "HOLD", "insight": ""}
-            if bot_state["iterations"] % 5 == 0:
-                ai_result = await ai_analyze(price, indicators, ob_data or {})
-                bot_state["last_ai_insight"] = ai_result.get("insight", "")
-                # Store AI insight
-                insight_doc = {
+            if state["iterations"] % 5 == 0:
+                ai_result = await ai_analyze(price, indicators, ob_data or {}, symbol)
+                state["last_ai_insight"] = ai_result.get("insight", "")
+                await db.ai_insights.insert_one({
                     "id": str(uuid.uuid4()),
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "insight": ai_result.get("insight", ""),
                     "signal": ai_result.get("signal", "HOLD"),
                     "price": price,
-                }
-                await db.ai_insights.insert_one(insight_doc)
+                    "symbol": symbol,
+                })
 
-            # 5. Decide signal
             ob_signal = ob_data["signal"] if ob_data else "HOLD"
             final_signal, rsi_signal = decide_signal(ai_result.get("signal", "HOLD"), ob_signal, indicators)
-            bot_state["last_signal"] = final_signal
+            state["last_signal"] = final_signal
 
-            # 6. Log signal to DB
             signal_doc = {
                 "id": str(uuid.uuid4()),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "price": price,
                 "signal": final_signal,
+                "symbol": symbol,
                 "rsi": indicators.get("rsi"),
                 "ema50": indicators.get("ema50"),
                 "ema200": indicators.get("ema200"),
@@ -298,18 +345,92 @@ async def bot_loop():
             }
             await db.signals.insert_one(signal_doc)
 
-            bot_state["iterations"] += 1
-            logger.info(f"Iteration {bot_state['iterations']}: {final_signal} @ ${price:,.2f}")
+            # Check alerts
+            await check_alerts(symbol, price, final_signal)
 
-            # Wait 60 seconds
+            # Auto-trade if enabled
+            await check_auto_trade(symbol, price, final_signal, indicators)
+
+            state["iterations"] += 1
+            logger.info(f"[{symbol}] Iteration {state['iterations']}: {final_signal} @ ${price:,.2f}")
             await asyncio.sleep(60)
 
         except Exception as e:
-            logger.error(f"Bot loop error: {e}")
-            bot_state["errors"].append({"time": datetime.now(timezone.utc).isoformat(), "error": str(e)[:200]})
+            logger.error(f"Bot loop error [{symbol}]: {e}")
+            state["errors"].append({"time": datetime.now(timezone.utc).isoformat(), "error": str(e)[:200]})
             await asyncio.sleep(30)
+    logger.info(f"Bot loop stopped for {symbol}")
 
-    logger.info("Bot loop stopped")
+# ---- TRADE EXECUTION ----
+
+async def check_auto_trade(symbol, price, signal, indicators):
+    settings = await db.risk_settings.find_one({"symbol": symbol}, {"_id": 0})
+    if not settings or not settings.get("auto_trade"):
+        return
+    if signal in ["STRONG BUY", "STRONG SELL"]:
+        side = "BUY" if "BUY" in signal else "SELL"
+        amount = settings.get("max_position_size", 0.001)
+        sl_pct = settings.get("stop_loss_pct", 2.0)
+        tp_pct = settings.get("take_profit_pct", 5.0)
+        stop_loss = price * (1 - sl_pct / 100) if side == "BUY" else price * (1 + sl_pct / 100)
+        take_profit = price * (1 + tp_pct / 100) if side == "BUY" else price * (1 - tp_pct / 100)
+        await execute_trade(symbol, side, "MARKET", amount, price, stop_loss, take_profit)
+
+async def execute_trade(symbol, side, order_type, amount, price, stop_loss=None, take_profit=None):
+    trade_doc = {
+        "id": str(uuid.uuid4()),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "symbol": symbol,
+        "side": side,
+        "type": order_type,
+        "amount": amount,
+        "price": price,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "status": "SIMULATED",
+        "pnl": None,
+        "closed_at": None,
+        "close_price": None,
+    }
+
+    # Try real execution via authenticated exchange
+    auth_ex = create_auth_exchange()
+    if auth_ex:
+        try:
+            if order_type == "MARKET":
+                if side == "BUY":
+                    order = auth_ex.create_market_buy_order(symbol, amount)
+                else:
+                    order = auth_ex.create_market_sell_order(symbol, amount)
+                trade_doc["status"] = "FILLED"
+                trade_doc["exchange_order_id"] = order.get("id")
+                trade_doc["price"] = order.get("average", price)
+            elif order_type == "LIMIT" and price:
+                if side == "BUY":
+                    order = auth_ex.create_limit_buy_order(symbol, amount, price)
+                else:
+                    order = auth_ex.create_limit_sell_order(symbol, amount, price)
+                trade_doc["status"] = "OPEN"
+                trade_doc["exchange_order_id"] = order.get("id")
+        except Exception as e:
+            logger.error(f"Trade execution error: {e}")
+            trade_doc["status"] = "SIMULATED"
+            trade_doc["error"] = str(e)[:200]
+
+    await db.trades.insert_one(trade_doc)
+
+    # Create notification for trade
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "symbol": symbol,
+        "type": f"trade_{side.lower()}",
+        "message": f"{'SIMULATED ' if trade_doc['status'] == 'SIMULATED' else ''}{side} {amount} {symbol.split('/')[0]} @ ${price:,.2f}" + (f" | SL: ${stop_loss:,.2f}" if stop_loss else "") + (f" | TP: ${take_profit:,.2f}" if take_profit else ""),
+        "price": price,
+        "signal": side,
+        "read": False,
+    })
+    return trade_doc
 
 # ---- API ROUTES ----
 
@@ -317,53 +438,67 @@ async def bot_loop():
 async def root():
     return {"message": "Crypto AI Trading Bot API"}
 
+# Supported pairs
+@api_router.get("/pairs")
+async def get_pairs():
+    return {"pairs": SUPPORTED_PAIRS, "default": DEFAULT_SYMBOL}
+
+# Multi-pair prices
+@api_router.get("/market/prices")
+async def get_all_prices():
+    data = await asyncio.to_thread(fetch_multi_prices_sync)
+    return {"prices": data}
+
 # Bot control
 @api_router.get("/bot/status")
-async def get_bot_status():
-    return BotStatus(
-        running=bot_state["running"],
-        last_price=bot_state["last_price"],
-        last_signal=bot_state["last_signal"],
-        started_at=bot_state["started_at"],
-        iterations=bot_state["iterations"],
-        symbol=SYMBOL,
-        timeframe=TIMEFRAME,
-    )
+async def get_bot_status(symbol: str = DEFAULT_SYMBOL):
+    state = get_bot_state(symbol)
+    return {
+        "running": state["running"],
+        "last_price": state["last_price"],
+        "last_signal": state["last_signal"],
+        "started_at": state["started_at"],
+        "iterations": state["iterations"],
+        "symbol": symbol,
+        "timeframe": TIMEFRAME,
+    }
 
 @api_router.post("/bot/start")
-async def start_bot():
-    if bot_state["running"]:
+async def start_bot(symbol: str = DEFAULT_SYMBOL):
+    state = get_bot_state(symbol)
+    if state["running"]:
         return {"status": "already_running"}
-    bot_state["running"] = True
-    bot_state["started_at"] = datetime.now(timezone.utc).isoformat()
-    bot_state["iterations"] = 0
-    bot_state["errors"] = []
-    bot_state["task"] = asyncio.create_task(bot_loop())
-    return {"status": "started"}
+    state["running"] = True
+    state["started_at"] = datetime.now(timezone.utc).isoformat()
+    state["iterations"] = 0
+    state["errors"] = []
+    state["task"] = asyncio.create_task(bot_loop(symbol))
+    return {"status": "started", "symbol": symbol}
 
 @api_router.post("/bot/stop")
-async def stop_bot():
-    if not bot_state["running"]:
+async def stop_bot(symbol: str = DEFAULT_SYMBOL):
+    state = get_bot_state(symbol)
+    if not state["running"]:
         return {"status": "already_stopped"}
-    bot_state["running"] = False
-    if bot_state["task"]:
-        bot_state["task"].cancel()
-        bot_state["task"] = None
-    return {"status": "stopped"}
+    state["running"] = False
+    if state["task"]:
+        state["task"].cancel()
+        state["task"] = None
+    return {"status": "stopped", "symbol": symbol}
 
-# Market data (live fetch, no bot needed)
+# Market data
 @api_router.get("/market/price")
-async def get_price():
-    data = await asyncio.to_thread(fetch_price_sync)
+async def get_price(symbol: str = DEFAULT_SYMBOL):
+    data = await asyncio.to_thread(fetch_price_sync, symbol)
     if data is None:
-        return {"error": "Failed to fetch price"}
+        return {"error": f"Failed to fetch price for {symbol}"}
     return data
 
 @api_router.get("/market/ohlcv")
-async def get_ohlcv(limit: int = 100):
-    df = await asyncio.to_thread(fetch_ohlcv_sync, min(limit, 500))
+async def get_ohlcv(symbol: str = DEFAULT_SYMBOL, limit: int = 100):
+    df = await asyncio.to_thread(fetch_ohlcv_sync, symbol, min(limit, 500))
     if df is None:
-        return {"error": "Failed to fetch OHLCV data"}
+        return {"error": f"Failed to fetch OHLCV for {symbol}"}
     records = []
     for _, row in df.iterrows():
         records.append({
@@ -374,80 +509,161 @@ async def get_ohlcv(limit: int = 100):
             "close": round(float(row['close']), 2),
             "volume": round(float(row['volume']), 4),
         })
-    return {"data": records, "symbol": SYMBOL, "timeframe": TIMEFRAME}
+    return {"data": records, "symbol": symbol, "timeframe": TIMEFRAME}
 
 @api_router.get("/market/orderbook")
-async def get_orderbook():
-    data = await asyncio.to_thread(fetch_orderbook_sync)
+async def get_orderbook(symbol: str = DEFAULT_SYMBOL):
+    data = await asyncio.to_thread(fetch_orderbook_sync, symbol)
     if data is None:
-        return {"error": "Failed to fetch order book"}
+        return {"error": f"Failed to fetch order book for {symbol}"}
     return data
 
 @api_router.get("/market/indicators")
-async def get_indicators():
-    df = await asyncio.to_thread(fetch_ohlcv_sync, 200)
+async def get_indicators(symbol: str = DEFAULT_SYMBOL):
+    df = await asyncio.to_thread(fetch_ohlcv_sync, symbol, 200)
     _, indicators = compute_indicators(df)
     return indicators
 
 # Signals
 @api_router.get("/signals/current")
-async def get_current_signal():
+async def get_current_signal(symbol: str = DEFAULT_SYMBOL):
+    state = get_bot_state(symbol)
     return {
-        "signal": bot_state["last_signal"],
-        "price": bot_state["last_price"],
-        "indicators": bot_state["last_indicators"],
-        "orderbook": bot_state["last_orderbook"],
-        "ai_insight": bot_state["last_ai_insight"],
-        "iterations": bot_state["iterations"],
+        "signal": state["last_signal"],
+        "price": state["last_price"],
+        "indicators": state["last_indicators"],
+        "orderbook": state["last_orderbook"],
+        "ai_insight": state["last_ai_insight"],
+        "iterations": state["iterations"],
+        "symbol": symbol,
     }
 
 @api_router.get("/signals/history")
-async def get_signal_history(limit: int = 50):
-    signals = await db.signals.find({}, {"_id": 0}).sort("timestamp", -1).to_list(limit)
+async def get_signal_history(symbol: str = DEFAULT_SYMBOL, limit: int = 50):
+    signals = await db.signals.find({"symbol": symbol}, {"_id": 0}).sort("timestamp", -1).to_list(limit)
     return {"signals": signals}
 
 # AI insights
 @api_router.post("/ai/analyze")
-async def trigger_ai_analysis():
-    price_data = await asyncio.to_thread(fetch_price_sync)
+async def trigger_ai_analysis(symbol: str = DEFAULT_SYMBOL):
+    price_data = await asyncio.to_thread(fetch_price_sync, symbol)
     if not price_data:
         return {"error": "Could not fetch price"}
     price = price_data["price"]
-
-    df = await asyncio.to_thread(fetch_ohlcv_sync, 200)
+    df = await asyncio.to_thread(fetch_ohlcv_sync, symbol, 200)
     _, indicators = compute_indicators(df)
-
-    ob_data = await asyncio.to_thread(fetch_orderbook_sync)
-
-    result = await ai_analyze(price, indicators, ob_data or {})
-
-    insight_doc = {
+    ob_data = await asyncio.to_thread(fetch_orderbook_sync, symbol)
+    result = await ai_analyze(price, indicators, ob_data or {}, symbol)
+    await db.ai_insights.insert_one({
         "id": str(uuid.uuid4()),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "insight": result.get("insight", ""),
         "signal": result.get("signal", "HOLD"),
         "price": price,
-    }
-    await db.ai_insights.insert_one(insight_doc)
-
-    return {
-        "signal": result.get("signal", "HOLD"),
-        "insight": result.get("insight", ""),
-        "price": price,
-        "indicators": indicators,
-    }
+        "symbol": symbol,
+    })
+    return {"signal": result.get("signal", "HOLD"), "insight": result.get("insight", ""), "price": price, "indicators": indicators, "symbol": symbol}
 
 @api_router.get("/ai/insights")
-async def get_ai_insights(limit: int = 20):
-    insights = await db.ai_insights.find({}, {"_id": 0}).sort("timestamp", -1).to_list(limit)
+async def get_ai_insights(symbol: str = DEFAULT_SYMBOL, limit: int = 20):
+    insights = await db.ai_insights.find({"symbol": symbol}, {"_id": 0}).sort("timestamp", -1).to_list(limit)
     return {"insights": insights}
 
-# Errors
-@api_router.get("/bot/errors")
-async def get_bot_errors():
-    return {"errors": bot_state["errors"][-20:]}
+# ---- TRADE ROUTES ----
 
-# Include router
+@api_router.post("/trades/execute")
+async def execute_trade_endpoint(req: TradeRequest):
+    price_data = await asyncio.to_thread(fetch_price_sync, req.symbol)
+    price = price_data["price"] if price_data else req.price or 0
+    trade = await execute_trade(req.symbol, req.side, req.type, req.amount, price, req.stop_loss, req.take_profit)
+    # Remove _id before returning
+    trade.pop("_id", None)
+    return trade
+
+@api_router.get("/trades/history")
+async def get_trade_history(symbol: str = DEFAULT_SYMBOL, limit: int = 50):
+    trades = await db.trades.find({"symbol": symbol}, {"_id": 0}).sort("timestamp", -1).to_list(limit)
+    return {"trades": trades}
+
+@api_router.get("/trades/open")
+async def get_open_trades(symbol: str = DEFAULT_SYMBOL):
+    trades = await db.trades.find({"symbol": symbol, "status": {"$in": ["OPEN", "SIMULATED"]}}, {"_id": 0}).sort("timestamp", -1).to_list(50)
+    return {"trades": trades}
+
+@api_router.post("/trades/close/{trade_id}")
+async def close_trade(trade_id: str):
+    trade = await db.trades.find_one({"id": trade_id}, {"_id": 0})
+    if not trade:
+        return {"error": "Trade not found"}
+    price_data = await asyncio.to_thread(fetch_price_sync, trade["symbol"])
+    close_price = price_data["price"] if price_data else trade["price"]
+    pnl = (close_price - trade["price"]) * trade["amount"] if trade["side"] == "BUY" else (trade["price"] - close_price) * trade["amount"]
+    await db.trades.update_one({"id": trade_id}, {"$set": {"status": "CLOSED", "closed_at": datetime.now(timezone.utc).isoformat(), "close_price": close_price, "pnl": round(pnl, 2)}})
+    return {"status": "closed", "pnl": round(pnl, 2), "close_price": close_price}
+
+# ---- RISK SETTINGS ----
+
+@api_router.get("/risk/settings")
+async def get_risk_settings(symbol: str = DEFAULT_SYMBOL):
+    settings = await db.risk_settings.find_one({"symbol": symbol}, {"_id": 0})
+    if not settings:
+        settings = {"symbol": symbol, "stop_loss_pct": 2.0, "take_profit_pct": 5.0, "max_position_size": 0.001, "trailing_stop": False, "trailing_stop_pct": 1.0, "auto_trade": False}
+    return settings
+
+@api_router.post("/risk/settings")
+async def save_risk_settings(settings: RiskSettings):
+    doc = settings.model_dump()
+    doc["auto_trade"] = False
+    await db.risk_settings.update_one({"symbol": settings.symbol}, {"$set": doc}, upsert=True)
+    return {"status": "saved"}
+
+@api_router.post("/risk/auto-trade")
+async def toggle_auto_trade(symbol: str = DEFAULT_SYMBOL, enabled: bool = False):
+    await db.risk_settings.update_one({"symbol": symbol}, {"$set": {"auto_trade": enabled}}, upsert=True)
+    return {"status": "updated", "auto_trade": enabled}
+
+# ---- ALERT ROUTES ----
+
+@api_router.post("/alerts/create")
+async def create_alert(rule: AlertRule):
+    doc = rule.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.alerts.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.get("/alerts")
+async def get_alerts(symbol: str = DEFAULT_SYMBOL):
+    alerts = await db.alerts.find({"symbol": symbol}, {"_id": 0}).to_list(100)
+    return {"alerts": alerts}
+
+@api_router.delete("/alerts/{alert_id}")
+async def delete_alert(alert_id: str):
+    await db.alerts.delete_one({"id": alert_id})
+    return {"status": "deleted"}
+
+@api_router.get("/notifications")
+async def get_notifications(limit: int = 30):
+    notifs = await db.notifications.find({}, {"_id": 0}).sort("timestamp", -1).to_list(limit)
+    return {"notifications": notifs}
+
+@api_router.get("/notifications/unread")
+async def get_unread_count():
+    count = await db.notifications.count_documents({"read": False})
+    return {"unread": count}
+
+@api_router.post("/notifications/read")
+async def mark_all_read():
+    await db.notifications.update_many({"read": False}, {"$set": {"read": True}})
+    return {"status": "done"}
+
+# Bot errors
+@api_router.get("/bot/errors")
+async def get_bot_errors(symbol: str = DEFAULT_SYMBOL):
+    state = get_bot_state(symbol)
+    return {"errors": state["errors"][-20:]}
+
 app.include_router(api_router)
 
 app.add_middleware(
@@ -460,7 +676,8 @@ app.add_middleware(
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    bot_state["running"] = False
-    if bot_state["task"]:
-        bot_state["task"].cancel()
+    for state in bot_states.values():
+        state["running"] = False
+        if state["task"]:
+            state["task"].cancel()
     client.close()
