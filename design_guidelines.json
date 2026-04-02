@@ -1,0 +1,126 @@
+{
+  "project_name": "Crypto AI Trading Bot Dashboard",
+  "theme": "Dark Mode",
+  "archetype": "Archetype 4 (Swiss & High-Contrast) - Dark Mode + Neo-Brutalist Terminal",
+  "design_philosophy": {
+    "core_principles": [
+      "No rounded corners. Everything is a rigid rectangle with 1px solid borders.",
+      "Data over decoration. Omit gradients, soft shadows, and glassmorphism. Use raw, exposed structure.",
+      "High contrast text hierarchy. Huge brutalist headers paired with microscopic data tables.",
+      "Unforgiving, precise, and fast. The aesthetic should feel like an institutional quant trading terminal."
+    ],
+    "mood": "Authoritative, cold, precise, machine-driven.",
+    "anti_patterns_avoided": [
+      "Generic 'SaaS' soft dark mode with muddy greys.",
+      "Useless glow effects behind charts.",
+      "Rounded floating cards. We use border-collapse style grids instead."
+    ]
+  },
+  "typography": {
+    "headings": {
+      "family": "Chivo, sans-serif",
+      "weights": ["400", "700", "900"],
+      "usage": "Used strictly for panel titles, macro stats, and the giant signal displays. Must be tracking-tight."
+    },
+    "data_and_body": {
+      "family": "JetBrains Mono, Roboto Mono, monospace",
+      "weights": ["400", "700"],
+      "usage": "Mandatory for all numbers, prices, timestamps, logs, and AI outputs. Ensures vertical alignment in tables."
+    },
+    "scales": {
+      "h1": "text-4xl md:text-5xl font-black tracking-tighter uppercase",
+      "h2": "text-2xl font-bold tracking-tight uppercase",
+      "h3": "text-base font-bold uppercase tracking-widest text-zinc-400",
+      "signal_display": "text-6xl md:text-8xl font-black tracking-tighter uppercase",
+      "body": "text-sm font-mono",
+      "micro": "text-xs font-mono uppercase tracking-widest"
+    }
+  },
+  "colors": {
+    "backgrounds": {
+      "page": "bg-[#050505]",
+      "panel": "bg-[#0A0A0A]",
+      "terminal_log": "bg-black",
+      "highlight": "bg-zinc-900"
+    },
+    "text": {
+      "primary": "text-zinc-50",
+      "secondary": "text-zinc-400",
+      "tertiary": "text-zinc-600"
+    },
+    "borders": {
+      "default": "border-zinc-800",
+      "focus": "border-zinc-400",
+      "signal": "border-zinc-50"
+    },
+    "signals": {
+      "buy_up": {
+        "text": "text-[#00FF41]",
+        "bg": "bg-[#00FF41]/10",
+        "border": "border-[#00FF41]"
+      },
+      "sell_down": {
+        "text": "text-[#FF003C]",
+        "bg": "bg-[#FF003C]/10",
+        "border": "border-[#FF003C]"
+      },
+      "wait_neutral": {
+        "text": "text-[#FDE047]",
+        "bg": "bg-[#FDE047]/10",
+        "border": "border-[#FDE047]"
+      }
+    }
+  },
+  "spacing_and_layout": {
+    "grid_strategy": "The 'Control Room' Grid (Mode B). Dense, edge-to-edge.",
+    "padding": {
+      "panel": "p-4 md:p-6",
+      "table_cell": "px-3 py-2",
+      "terminal": "p-4"
+    },
+    "borders_and_radii": "CRITICAL: `rounded-none` on EVERYTHING. Use `border border-zinc-800` on all panels. No spacing (`gap-0`) between grid items if using a border-collapse layout, or standard `gap-4` with 1px borders if using standard grid.",
+    "layout_structure": [
+      "Top Bar: Bot Status, Current PnL, Start/Stop toggle (1 row).",
+      "Main Display: 3-column grid. Left 2 columns = BTC/USDT Chart. Right 1 column = MASSIVE Signal Block & RSI/EMA Gauges.",
+      "Middle Display: 3-column grid. Left 1 column = Order Book. Middle/Right 2 columns = AI Market Analysis Terminal.",
+      "Bottom Display: Full width Trade History Log Table."
+    ]
+  },
+  "components": {
+    "bot_status": {
+      "style": "Minimalist header. 'STATUS: ACTIVE' with a blinking green dot (`animate-pulse bg-[#00FF41]`)."
+    },
+    "buttons": {
+      "style": "Flat, 1px border. `border-zinc-50 bg-transparent text-zinc-50`. Hover: Invert colors (`bg-zinc-50 text-black`). No rounded corners."
+    },
+    "chart": {
+      "library": "Recharts",
+      "style": "Line or Area chart. Remove grid lines entirely or make them extremely faint (`stroke-zinc-900`). Axis text in `text-xs font-mono`. Use pure white `#FFFFFF` for the line to emphasize rawness, or `#00FF41`/`#FF003C` depending on 24h trend.",
+      "tooltip": "Black background, 1px white border, mono text."
+    },
+    "trading_signal": {
+      "style": "The most prominent element. A large box with `border-2` (using the signal color). Inside: `STRONG BUY`, `SELL`, or `WAIT` in `text-6xl md:text-8xl font-black`."
+    },
+    "gauges_indicators": {
+      "style": "Raw progress bars (`h-2 rounded-none bg-zinc-900`). Overlaid with the current value in monospace (e.g., `RSI: 72.4 [OVERBOUGHT]`). Color-code the text based on the threshold."
+    },
+    "ai_analysis_terminal": {
+      "style": "Mimics a command-line interface. `bg-black border border-zinc-800 p-4`. Text is `text-sm font-mono text-zinc-400`. The latest AI insight is white or green. Add a blinking block cursor `\u2588` at the end."
+    },
+    "order_book_and_logs": {
+      "style": "Dense tabular data. `table-auto w-full`. `border-b border-zinc-900` on rows. Right-align numbers. Color the Ask prices red, Bid prices green."
+    }
+  },
+  "motion": {
+    "philosophy": "Instant and functional. No slow, sweeping animations.",
+    "transitions": "Hover states use `transition-colors duration-75`. Very snappy.",
+    "data_updates": "If a number changes, flash its background white for 100ms, then fade back (mimics Bloomberg terminal tick updates)."
+  },
+  "icons_and_assets": {
+    "library": "lucide-react",
+    "usage": "Use icons sparingly. Prefer text labels (e.g., `[ PLAY ]` instead of a play triangle). If icons are used, stroke width must be 1.5 or 2, sharp geometric shapes."
+  },
+  "testing": {
+    "requirements": "All interactive elements, forms, and data panels MUST have `data-testid` (e.g., `data-testid=\"start-bot-button\"`, `data-testid=\"signal-display\"`, `data-testid=\"ai-terminal-log\"`)."
+  }
+}
